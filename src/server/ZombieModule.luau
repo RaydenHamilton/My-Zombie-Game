@@ -6,6 +6,20 @@ local Workspace = game:GetService("Workspace")
 local PathfindingService = game:GetService("PathfindingService")
 local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+--// Data Tables
+local entitiesPositions = {}
+local neighborOffsets = {
+	{ -1, -1 },
+	{ 0, -1 },
+	{ 1, -1 }, -- NW, N, NE
+	{ -1, 0 },
+	{ 1, 0 }, -- W,      E
+	{ -1, 1 },
+	{ 0, 1 },
+	{ 1, 1 }, -- SW, S, SE
+}
+
 function Module.new()
 	local self = {
 		zombie = ReplicatedStorage.Humanoids.Zombie:Clone(),
@@ -13,7 +27,9 @@ function Module.new()
 		aggroRadios = 50,
 		attackRange = 4,
 		movingAway = false,
+		steps = 4,
 	}
+	self.humanoid = self.zombie.Humanoid
 	local highlight = Instance.new("Highlight")
 	highlight.Parent = self.zombie
 	return setmetatable(self, { __index = Module })
@@ -71,76 +87,51 @@ function Module:IsTargetLessThen(number)
 	end
 end
 
+function Module:getGridPosition()
+	local rawPosition = self.zombie.HumanoidRootPart.Position
+	local function cutUpNumber(number)
+		return math.round(number / self.steps) * self.steps
+	end
+	return Vector3.new(cutUpNumber(rawPosition.X), cutUpNumber(rawPosition.Y), cutUpNumber(rawPosition.Z))
+end
+
+function Module:getTestPosition(index)
+	local Xoffset = neighborOffsets[index][1] * self.steps
+	local Zoffset = neighborOffsets[index][2] * self.steps
+	return self:getGridPosition() + Vector3.new(Xoffset, 0, Zoffset)
+end
+
+function Module:getTestMagnitude(index)
+	local testPosition = self:getTestPosition(index)
+	return (testPosition - self.target.HumanoidRootPart.Position).Magnitude
+end
+
 function Module:walkToTarget()
-	if not self.target or not self.target:WaitForChild("Humanoid") or self.target.Humanoid.Health == 0 then
-		self:getTarget()
-	end
-	local path = PathfindingService:CreatePath({ AgentCanJump = false })
-
-	local character = self.zombie
-	local humanoid = character:WaitForChild("Humanoid")
-
-	local TEST_DESTINATION = self.target:GetPivot().Position
-
-	local waypoints
-	local nextWaypointIndex
-	local reachedConnection
-	local blockedConnection
-	local function followPath(destination)
-		local success, errorMessage = pcall(function()
-			path:ComputeAsync(character.PrimaryPart.Position, destination)
-		end)
-
-		if success and path.Status == Enum.PathStatus.Success then
-			waypoints = path:GetWaypoints()
-
-			blockedConnection = path.Blocked:Connect(function(blockedWaypointIndex)
-				if blockedWaypointIndex >= nextWaypointIndex then
-					blockedConnection:Disconnect()
-					followPath(destination)
+	while true do
+		local position = self:getGridPosition()
+		local key = tostring(math.round(position.X)) .. "," .. tostring(math.round(position.Z))
+		local bestPosition
+		for i in neighborOffsets do
+			local testPosition = self:getTestPosition(i)
+			local testKey = tostring(math.round(testPosition.X)) .. "," .. tostring(math.round(testPosition.Z))
+			if not entitiesPositions[testKey] then
+				if not bestPosition or self:getTestMagnitude(i) < self:getTestMagnitude(bestPosition) then
+					bestPosition = i
 				end
-			end)
-
-			if not reachedConnection then
-				reachedConnection = humanoid.MoveToFinished:Connect(function(reached)
-					if reached and nextWaypointIndex < #waypoints then
-						nextWaypointIndex += 1
-						humanoid:MoveTo(waypoints[nextWaypointIndex].Position)
-					else
-						reachedConnection:Disconnect()
-						blockedConnection:Disconnect()
-					end
-				end)
 			end
-			nextWaypointIndex = 2
-			humanoid:MoveTo(waypoints[nextWaypointIndex].Position)
+		end
+		if bestPosition then
+			self.humanoid:MoveTo(self:getTestPosition(bestPosition))
+			local nextKey = tostring(math.round(self:getTestPosition(bestPosition).X))
+				.. ","
+				.. tostring(math.round(self:getTestPosition(bestPosition).Z))
+			entitiesPositions[nextKey] = true
+			self.humanoid.MoveToFinished:Wait()
+			entitiesPositions[key] = nil
 		else
-			warn("Path not computed!", errorMessage)
+			task.wait(1)
 		end
 	end
-	RunService.RenderStepped:Connect(function()
-		if self:IsTargetMoreThen(0) then
-			for _, folder in Workspace.Entities.Humanoids:GetChildren() do
-				for _, entity in folder:GetChildren() do
-					if
-						entity ~= self.zombie
-						and (entity.HumanoidRootPart.Position - self.zombie.HumanoidRootPart.Position).magnitude < 4
-					then
-						local offset = self.zombie.HumanoidRootPart.Position - entity.HumanoidRootPart.Position
-						self.zombie.Humanoid:MoveTo(self.zombie.HumanoidRootPart.Position + offset.Unit * 6)
-					end
-				end
-			end
-		end
-		if self:IsTargetLessThen(50) then
-			if self:IsTargetMoreThen(self.attackRange) then
-				self:attack()
-			end
-		end
-		if self.attacking == false then
-			followPath(TEST_DESTINATION)
-		end
-	end)
 end
 
 function Module:attack()
