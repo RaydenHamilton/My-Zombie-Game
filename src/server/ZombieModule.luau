@@ -20,9 +20,9 @@ local neighborOffsets = {
 	{ 1, 1 }, -- SW, S, SE
 }
 
-function Module.new()
+function Module.new(humanoid)
 	local self = {
-		zombie = ReplicatedStorage.Humanoids.Zombie:Clone(),
+		zombie = ReplicatedStorage.Humanoids[humanoid]:Clone(),
 		attacking = false,
 		aggroRadios = 50,
 		attackRange = 4,
@@ -106,26 +106,29 @@ function Module:getTestMagnitude(index)
 	return (testPosition - self.target.HumanoidRootPart.Position).Magnitude
 end
 
+function getKey(position)
+	return tostring(math.round(position.X)) .. "," .. tostring(math.round(position.Z))
+end
+
 function Module:walkToTarget()
 	while true do
 		local position = self:getGridPosition()
-		local key = tostring(math.round(position.X)) .. "," .. tostring(math.round(position.Z))
+		local key = getKey(position)
 		local bestPosition
 		for i in neighborOffsets do
-			local testPosition = self:getTestPosition(i)
-			local testKey = tostring(math.round(testPosition.X)) .. "," .. tostring(math.round(testPosition.Z))
-			if not entitiesPositions[testKey] then
+			if not entitiesPositions[getKey(self:getTestPosition(i))] then
 				if not bestPosition or self:getTestMagnitude(i) < self:getTestMagnitude(bestPosition) then
 					bestPosition = i
 				end
 			end
 		end
-		if bestPosition then
+		if
+			bestPosition
+			and self:getTestMagnitude(bestPosition)
+				< (self:getGridPosition() - self.target.HumanoidRootPart.Position).Magnitude
+		then
 			self.humanoid:MoveTo(self:getTestPosition(bestPosition))
-			local nextKey = tostring(math.round(self:getTestPosition(bestPosition).X))
-				.. ","
-				.. tostring(math.round(self:getTestPosition(bestPosition).Z))
-			entitiesPositions[nextKey] = true
+			entitiesPositions[getKey(self:getTestPosition(bestPosition))] = true
 			self.humanoid.MoveToFinished:Wait()
 			entitiesPositions[key] = nil
 		else
@@ -153,3 +156,4 @@ function Module:attack()
 end
 
 return Module
+
